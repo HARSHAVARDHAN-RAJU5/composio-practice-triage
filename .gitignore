@@ -1,0 +1,12 @@
+# secrets
+.env
+Api key
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# run output
+log.jsonl
+escalation.jsonl

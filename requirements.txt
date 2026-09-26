@@ -1,0 +1,4 @@
+composio
+google-genai
+python-dotenv
+pydantic

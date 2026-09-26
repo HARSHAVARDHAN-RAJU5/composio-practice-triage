@@ -17,6 +17,7 @@ def test_maps_github_payload():
             "user": {"login": "alice"},
             "state": "open",
             "html_url": "https://github.com/o/r/issues/5",
+            "comments": 4,
         },
         REPO,
     )
@@ -28,6 +29,7 @@ def test_maps_github_payload():
         "author": "alice",
         "state": "open",
         "url": "https://github.com/o/r/issues/5",
+        "comments": 4,
         "repo": "o/r",
     }
 

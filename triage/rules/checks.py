@@ -1,7 +1,8 @@
 """Deterministic rules. A reply is posted only if every rule passes; anything else escalates.
 
 Before Gemini (issue only):  R7 open with a body, SECURITY no sensitive topics.
-After Gemini:                R1-R6 on the category, computed confidence and drafted reply.
+After Gemini:                R1-R6 on the category, computed confidence and drafted reply,
+                             R8 no @mentions, other-issue references or /commands in the reply.
 """
 import re
 from typing import List
@@ -28,9 +29,22 @@ PROMISES = re.compile(
     re.IGNORECASE,
 )
 
-# http(s) links and www. links (markdown links contain one of these too)
-LINK = re.compile(r"(https?://|www\.)[^\s<>()\[\]]+", re.IGNORECASE)
+# Any scheme link, protocol-relative "//host" (e.g. in <a href> / <img src>), and www. links.
+# Markdown and HTML links contain one of these too.
+LINK = re.compile(r"(?:\b[a-z][a-z0-9+.-]*:)?//[^\s<>\"'()\[\]]+|\bwww\.[^\s<>\"'()\[\]]+", re.IGNORECASE)
 LINK_TRAILING = ".,;:!?'\""
+# Bare domains ("evil.example/patch"). Curated TLDs: no md/py/sh/json etc., which are file names.
+BARE_DOMAIN = re.compile(
+    r"\b(?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|app|co|xyz|info|me|ai|ly|gg|to|cc|ru|cn|tk|biz|"
+    r"site|online|top|link|click|example|us|uk|de|fr|in)\b(?:/[^\s<>\"'()\[\]]*)?",
+    re.IGNORECASE,
+)
+
+# Things that make GitHub act on other people or places when the comment is posted
+MENTION = re.compile(r"(?<![\w`])@[a-z0-9][a-z0-9-]*(?:/[\w.-]+)?", re.IGNORECASE)  # user or @org/team
+ISSUE_REF = re.compile(r"(?<![\w/&])(?:#|\bgh-)(\d+)\b", re.IGNORECASE)             # #12, GH-12
+CROSS_REF = re.compile(r"\b[\w.-]+/[\w.-]+#\d+\b")                                   # owner/repo#12
+SLASH_COMMAND = re.compile(r"^\s*/[a-z][\w-]*", re.IGNORECASE | re.MULTILINE)       # /close, /assign
 
 STOPWORDS = {
     "the", "and", "for", "with", "from", "that", "this", "when", "what", "how", "why", "can", "does",
@@ -107,12 +121,26 @@ def r6_links_same_repo(issue: Issue, reply: str) -> RuleResult:
     for m in LINK.finditer(reply):
         url = m.group(0).rstrip(LINK_TRAILING)
         lower = url.lower()
-        # the repo itself, or any page under it; not e.g. github.com/owner/repo-evil
+        # https only; the repo itself or any page under it; not e.g. github.com/owner/repo-evil
         if not (lower == repo_url or lower.startswith((repo_url + "/", repo_url + "#", repo_url + "?"))):
             bad.append(url)
+    # Bare domains, looked for only outside the links already checked
+    bad += [m.group(0).rstrip(LINK_TRAILING) for m in BARE_DOMAIN.finditer(LINK.sub(" ", reply))]
     if bad:
         return RuleResult(rule="R6", passed=False, detail=f"link outside the repo: {', '.join(bad)}")
     return RuleResult(rule="R6", passed=True, detail="no outside links")
+
+
+def r8_no_side_effects(issue: Issue, reply: str) -> RuleResult:
+    """Nothing that notifies people, links other issues, or triggers other bots."""
+    found = [m.group(0) for m in MENTION.finditer(reply)]
+    found += [m.group(0) for m in ISSUE_REF.finditer(reply) if int(m.group(1)) != issue.number]
+    own = f"{issue.repo}#{issue.number}".lower()
+    found += [m.group(0) for m in CROSS_REF.finditer(reply) if m.group(0).lower() != own]
+    found += [m.group(0).strip() for m in SLASH_COMMAND.finditer(reply)]
+    if found:
+        return RuleResult(rule="R8", passed=False, detail=f"mention/reference/command: {', '.join(found)}")
+    return RuleResult(rule="R8", passed=True, detail="no mentions, references or commands")
 
 
 def check_triage(issue: Issue, c: Classification, conf: Confidence) -> List[RuleResult]:
@@ -123,6 +151,7 @@ def check_triage(issue: Issue, c: Classification, conf: Confidence) -> List[Rule
         r4_mentions_issue(issue, c.reply),
         r5_no_promises(c.reply),
         r6_links_same_repo(issue, c.reply),
+        r8_no_side_effects(issue, c.reply),
     ]
 
 

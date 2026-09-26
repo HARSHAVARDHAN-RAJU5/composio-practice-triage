@@ -28,12 +28,23 @@ class Issue(BaseModel):
     author: str = Field("unknown", validation_alias=AliasPath("user", "login"))
     state: str = "unknown"
     url: str = Field("", validation_alias="html_url")
+    comments: int = 0  # comment count; 0 means we can skip looking for our own earlier reply
     repo: str  # owner/repo
+
+    @property
+    def ref(self) -> "RepoRef":
+        owner, name = self.repo.split("/", 1)
+        return RepoRef(owner=owner, repo=name, number=self.number)
 
     @field_validator("title", "body", "state", "url", mode="before")
     @classmethod
     def _none_to_empty(cls, v):
         return "" if v is None else v
+
+    @field_validator("comments", mode="before")
+    @classmethod
+    def _none_to_zero(cls, v):
+        return v or 0
 
     @field_validator("body")
     @classmethod

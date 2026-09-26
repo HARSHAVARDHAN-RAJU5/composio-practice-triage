@@ -1,6 +1,6 @@
 """GitHub actions through the Composio GitHub toolkit."""
 import json
-from typing import List
+from typing import List, Optional
 
 from composio import Composio
 from pydantic import ValidationError
@@ -12,6 +12,10 @@ from triage.models import Issue, RepoRef
 MAX_PER_PAGE = 100  # GitHub's page size cap
 # Pinned so tool input/output shapes can't change under us; bump deliberately
 GITHUB_TOOLKIT_VERSION = "20260924_00"
+# Invisible in rendered markdown; lets a re-run see we already replied so it never posts twice
+BOT_MARKER = "<!-- triage-bot -->"
+# Comment authors whose answer means the bot should stay out
+MAINTAINER_ROLES = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 
 class ToolError(Exception):
@@ -118,3 +122,45 @@ class GitHubTools:
         if repo.number:
             return [self.get_issue(repo)]
         return self.list_issues(repo, state, limit)
+
+    def skip_reason(self, issue: Issue) -> Optional[str]:
+        """Why this issue must not get a bot reply, from its comments; None if it may."""
+        if not issue.comments:
+            return None  # nothing to look through, save the call
+        maintainer = None
+        for c in self._comments(issue.ref):
+            if BOT_MARKER in (c.get("body") or ""):
+                return "already has a reply from this bot"
+            author = (c.get("user") or {}).get("login")
+            # A maintainer following up on their own issue hasn't answered anyone
+            if c.get("author_association") in MAINTAINER_ROLES and author != issue.author:
+                maintainer = maintainer or f"a maintainer ({author}, {c['author_association']}) already commented"
+        return maintainer
+
+    def _comments(self, ref: RepoRef) -> List[dict]:
+        comments, page = [], 1
+        while True:
+            data = self._execute(
+                "GITHUB_LIST_ISSUE_COMMENTS",
+                {"owner": ref.owner, "repo": ref.repo, "issue_number": ref.number,
+                 "per_page": MAX_PER_PAGE, "page": page},
+                ref,
+            )
+            batch = data.get("comments")
+            if not isinstance(batch, list):
+                raise ToolError(f"Unexpected response from GITHUB_LIST_ISSUE_COMMENTS for #{ref.number}")
+            comments += batch
+            if len(batch) < MAX_PER_PAGE:
+                return comments
+            page += 1
+
+    def post_comment(self, issue: Issue, reply: str) -> str:
+        """Post the reply with our hidden marker; return the comment URL."""
+        ref = issue.ref
+        data = self._execute(
+            "GITHUB_CREATE_AN_ISSUE_COMMENT",
+            {"owner": ref.owner, "repo": ref.repo, "issue_number": ref.number,
+             "body": f"{reply}\n\n{BOT_MARKER}"},
+            ref,
+        )
+        return data.get("html_url") or data.get("url") or ""

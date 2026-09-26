@@ -7,7 +7,7 @@ from triage.models import Classification, Confidence, Evidence, Issue
 from triage.pipeline import triage_issue
 from triage.rules.checks import (
     check_issue, r1_not_unclear, r2_confidence, r3_reply_length, r4_mentions_issue, r5_no_promises,
-    r6_links_same_repo, r7_open_with_body, security_check, title_keywords,
+    r6_links_same_repo, r7_open_with_body, r8_no_side_effects, security_check, title_keywords,
 )
 
 TITLE = "App crashes when uploading a PDF larger than 10 MB"
@@ -116,6 +116,16 @@ def test_r5_allows_normal_replies(reply):
         ("See https://github.com/someone/else", False),
         ("See http://github.com/HARSHAVARDHAN-RAJU5/Triage_sandbox", False),  # plain http
         ("See [docs](https://evil.example)", False),
+        # found in the live review: all used to pass
+        ('<a href="//evil.example/x">details</a>', False),
+        ('<img src="//evil.example/pixel.png">', False),
+        ("See evil.example for a patch.", False),
+        ("Download from files.evil.co/patch.exe", False),
+        ("ftp://evil.example/file", False),
+        # must not be mistaken for domains
+        ("Please attach README.md, config.json and main.py.", True),
+        ("Try running install.sh, e.g. with bash.", True),
+        ("See https://github.com/HARSHAVARDHAN-RAJU5/Triage_sandbox/blob/main/docs.md", True),
     ],
 )
 def test_r6(reply, passed):
@@ -185,7 +195,7 @@ STRONG = dict(actionable=1, single_topic=1, has_repro_steps=1, has_error_or_logs
 def test_pipeline_reply_when_all_rules_pass():
     r = triage_issue(issue(), FakeLLM(**STRONG))
     assert r.action == "reply", r.failed
-    assert [x.rule for x in r.rules] == ["R7", "SECURITY", "R1", "R2", "R3", "R4", "R5", "R6"]
+    assert [x.rule for x in r.rules] == ["R7", "SECURITY", "R1", "R2", "R3", "R4", "R5", "R6", "R8"]
 
 
 def test_pipeline_skips_gemini_when_pre_checks_fail():
@@ -211,3 +221,38 @@ def test_pipeline_escalates_invalid_output():
     llm.out = "not json"
     r = triage_issue(issue(), llm)
     assert r.action == "escalate" and r.failed[0].rule == "OUTPUT" and llm.calls == 2
+
+
+# --- R8: nothing that notifies people, links elsewhere or triggers bots --------------------------
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "cc @torvalds",
+        "Pinging @github/security-team for this.",
+        "This looks similar to #2.",
+        "Duplicate of GH-7.",
+        "See HARSHAVARDHAN-RAJU5/other-repo#5.",
+        "See someone/else#12.",
+        "Thanks!\n/close",
+        "  /assign @x",
+    ],
+)
+def test_r8_blocks_side_effects(reply):
+    assert not r8_no_side_effects(issue(), reply).passed
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Thanks for opening #12.",
+        "Thanks for issue GH-12.",
+        "Tracked as HARSHAVARDHAN-RAJU5/Triage_sandbox#12.",
+        "Email support@example.com is not a mention.",  # R6's job, not R8's
+        "The color #fff is fine, and so is `@decorator` in code.",
+        "Use and/or as needed; paths like src/main work.",
+        GOOD_REPLY,
+    ],
+)
+def test_r8_allows_normal_replies(reply):
+    assert r8_no_side_effects(issue(), reply).passed

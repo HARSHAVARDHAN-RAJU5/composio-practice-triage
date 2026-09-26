@@ -136,12 +136,32 @@ look-alike repos, security/money words escalate before Gemini.
 - [ ] `--state closed/all` conflicts with R7 (open only): remove the flag or keep it for debugging only.
 
 ### Logging and posting
-- **Re-runs will post again.** With `--post`, running twice comments twice. Check for an existing
-  bot comment, add a `triaged` label, or look in `log.jsonl`.
-- Open every output file with `encoding="utf-8"`; the Windows default (cp1252) crashes on emoji.
-- Give each run an ID. Log errors as well (`decision=error`). Never log keys.
-- `--post` stays off by default (dry run). Locked issues can't be commented on.
-- Speed: 300 issues took about 10s to fetch. With a Gemini call per issue, big runs will be slow
+Built in `triage/tools/records.py` and `triage/cli.py` (2026-09-27). Done: no double posts
+(hidden `<!-- triage-bot -->` marker, checked before triage), UTF-8 files, run IDs, errors logged
+as `decision=error` (run-level ones too), no keys logged, `--post` off by default.
+
+- [x] **Unsafe replies could be posted** (found in the live `--post` review). R6 now also catches
+  links without a scheme (`//host`, e.g. in `<a href>` / `<img src>`), any non-https scheme and bare
+  domains; new R8 blocks @mentions, references to other issues (`#N`, `GH-N`, `owner/repo#N`) and
+  `/slash` commands.
+- [x] **Bot replied after a maintainer had answered.** Now skipped when an OWNER, MEMBER or
+  COLLABORATOR (other than the issue author) has commented.
+- [ ] **Dry run shows one reply, `--post` posts another.** Each run asks Gemini again, so reviewed
+  text is not what gets posted (seen live on #2). Option: `--post-from log.jsonl` to post exactly
+  the replies from a reviewed dry run.
+- [ ] **Anyone can block the bot on an issue** by commenting `<!-- triage-bot -->`. Only accept
+  the marker on comments posted by the connected account.
+- [ ] **R6 bare-domain check can over-block**: a reply that repeats an email from the issue
+  (`jane@example.com`) fails R6 on `example.com` and escalates. Safe direction; not seen in
+  real replies yet.
+- [ ] **Escalations are re-recorded on every run.** Nothing marks an issue as escalated on GitHub,
+  so each run adds the same escalation again. Option: add a `needs-human` label via Composio and
+  skip labelled issues, or skip issues already in `escalation.jsonl`.
+- [ ] **Log files grow forever.** No rotation or size limit.
+- [ ] **Replies are posted from the connected GitHub account** (yours), not a bot account. Readers
+  can't tell it was automated. Option: a GitHub App / bot account, or a short footer line.
+- [ ] **Locked issues** fail on post (403) and are logged as `error`. Could be skipped up front.
+- [ ] Speed: 300 issues took about 10s to fetch. With a Gemini call per issue, big runs will be slow
   and use up the free quota: add a delay between calls or run a few at a time.
 
 ### Housekeeping

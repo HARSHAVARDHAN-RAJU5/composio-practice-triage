@@ -104,3 +104,9 @@ class Confidence(BaseModel):
 
     def explain(self) -> str:
         return " ".join(f"{'+' if p.delta >= 0 else '-'} {p.label} {abs(p.delta):.2f}" for p in self.parts).lstrip("+ ")
+
+
+class RuleResult(BaseModel):
+    rule: str  # "R1".."R7", "SECURITY", "OUTPUT"
+    passed: bool
+    detail: str

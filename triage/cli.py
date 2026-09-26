@@ -2,11 +2,11 @@
 import argparse
 import sys
 import textwrap
+from collections import Counter
 
 from triage.config import ConfigError, load_config
-from triage.llm.classify import classify
-from triage.llm.gemini import Gemini, LLMError
-from triage.rules.confidence import compute_confidence
+from triage.llm.gemini import Gemini
+from triage.pipeline import TriageResult, triage_issue
 from triage.tools.github import GitHubTools, ToolError
 from triage.tools.urls import InvalidTarget, parse_target
 
@@ -48,6 +48,7 @@ def main(argv=None) -> int:
 
     print(f"Fetched {len(issues)} issue(s) from {repo.full_name}\n")
     llm = None if args.fetch_only else Gemini(config)
+    counts = Counter()
     for issue in issues:
         labels = ", ".join(issue.labels) or "none"
         preview = issue.body.replace("\n", " ")[:80] or "(empty body)"
@@ -55,27 +56,30 @@ def main(argv=None) -> int:
         print(f"   author: {issue.author} | labels: {labels}")
         print(f"   {preview}")
         if llm:
-            print_classification(issue, llm)
+            result = triage_issue(issue, llm)
+            counts[result.action] += 1
+            print_result(result)
         print()
+    if llm:
+        print(f"Summary: {counts['reply']} reply, {counts['escalate']} escalate, {counts['error']} error")
     return 0
 
 
-def print_classification(issue, llm: Gemini) -> None:
-    try:
-        result = classify(issue, llm)
-    except LLMError as e:
-        print(f"   ! LLM error: {e}")
-        return
-    c = result.classification
-    if c is None:
-        print(f"   ! {result.error} ({result.model})")
-        return
-    retried = " after re-ask" if result.attempts > 1 else ""
-    conf = compute_confidence(issue, c)
-    print(f"   -> {c.category}, confidence {conf.score:.2f} via {result.model}{retried}")
-    print(f"   score: {conf.explain()}  (gemini said {c.model_confidence:.2f})")
-    print(f"   why: {c.reason}")
-    print("   reply: " + textwrap.fill(c.reply, width=96, subsequent_indent="          "))
+def print_result(r: TriageResult) -> None:
+    c = r.classification
+    if c:
+        retried = " after re-ask" if r.attempts > 1 else ""
+        print(f"   category: {c.category}, confidence {r.confidence.score:.2f} via {r.model}{retried}")
+        print(f"   score: {r.confidence.explain()}  (gemini said {c.model_confidence:.2f})")
+        print(f"   why: {c.reason}")
+        print("   reply: " + textwrap.fill(c.reply, width=96, subsequent_indent="          "))
+
+    if r.action == "error":
+        print(f"   => ERROR: {r.error}")
+    elif r.action == "escalate":
+        print("   => ESCALATE: " + "; ".join(f"{f.rule} {f.detail}" for f in r.failed))
+    else:
+        print("   => REPLY: all rules passed (" + ", ".join(x.rule for x in r.rules) + ")")
 
 
 if __name__ == "__main__":

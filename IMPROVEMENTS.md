@@ -120,15 +120,20 @@ gets 1 try), no money/refund talk in replies, question replies only acknowledge.
 - Turn off automatic function calling (it prints a warning on every call), and keep temperature low.
 
 ### Rules
-- **R3:** decide how words are counted (whitespace split, and whether markdown or code blocks count).
-- **R4:** match case-insensitively and skip stopwords, or "the" will pass.
-- **R5:** match case-insensitively and include variants ("we'll fix", "will be resolved", "ETA").
-- **R6:** catch bare domains (`evil.com`) and markdown links, not only `https://`. Compare the repo
-  case-insensitively.
-- **Security or money words** (refund, lost money, password, token, CVE, vulnerability) escalate
-  before Gemini is asked. Sandbox issue #3 is this case.
-- Skip bot authors (`*[bot]`, e.g. `vs-code-engineering[bot]` seen in real data).
-- `--state closed/all` conflicts with R7 (open only): remove the flag or keep it for debugging only.
+Built in `triage/rules/checks.py` (2026-09-27). Done: case-insensitive matching everywhere, R4
+stopwords, R5 "will fix" / "we'll fix" variants, R6 markdown links + case-insensitive repo +
+look-alike repos, security/money words escalate before Gemini.
+
+- [ ] **R3** counts words by whitespace; markdown and code blocks count as words.
+- [ ] **R5 misses soft promises** ("will look into", "as soon as possible", "shortly", "ETA",
+  "will be resolved"). Only the spec's phrases and direct variants are caught.
+- [ ] **R6 misses bare domains** (`evil.com`, no `http`/`www`). Also plain `http://` links to the
+  repo are rejected (only `https://` is allowed).
+- [ ] **SECURITY is broad on purpose** and will over-escalate: "paid plan", "token count",
+  "security settings", "secret" in normal feature requests all escalate. Tune after real runs.
+- [ ] **R4 is easy to pass**: any single title keyword counts, and Gemini is told to use #N anyway.
+- [ ] Skip bot authors (`*[bot]`, e.g. `vs-code-engineering[bot]` seen in real data).
+- [ ] `--state closed/all` conflicts with R7 (open only): remove the flag or keep it for debugging only.
 
 ### Logging and posting
 - **Re-runs will post again.** With `--post`, running twice comments twice. Check for an existing

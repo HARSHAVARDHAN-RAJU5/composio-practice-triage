@@ -5,9 +5,11 @@ import sys
 from triage.config import ConfigError, load_config
 from triage.llm.gemini import Gemini, LLMError
 from triage.tools.github import GitHubTools, ToolError
+from triage.tools.urls import InvalidTarget, parse_target
 
 
 def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
         config = load_config()
     except ConfigError as e:
@@ -21,13 +23,12 @@ def main() -> int:
         gh = GitHubTools(config)
         account = gh.check_connection()
         print(f"  [OK] GitHub connected (account {account})")
-        test_repo = os.getenv("TEST_REPO", "octocat/Hello-World")
-        owner, repo = test_repo.removeprefix("https://github.com/").strip("/").split("/")[:2]
-        issues = gh.list_issues(owner, repo, limit=3)
-        print(f"  [OK] fetched {len(issues)} issues from {owner}/{repo}")
+        repo = parse_target(os.getenv("TEST_REPO", "octocat/Hello-World"))
+        issues = gh.list_issues(repo, limit=3)
+        print(f"  [OK] fetched {len(issues)} issues from {repo.full_name}")
         for i in issues:
-            print(f"       #{i.get('number')} {i.get('title')}")
-    except ToolError as e:
+            print(f"       #{i.number} {i.title}")
+    except (ToolError, InvalidTarget) as e:
         print(f"  [FAIL] {e}")
         ok = False
 

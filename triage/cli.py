@@ -1,8 +1,12 @@
-"""Entry point: python -m triage.cli <owner/repo | issue URL> [--state open] [--limit 10]"""
+"""Entry point: python -m triage.cli <owner/repo | issue URL> [--state open] [--limit 10] [--fetch-only]"""
 import argparse
 import sys
+import textwrap
 
 from triage.config import ConfigError, load_config
+from triage.llm.classify import classify
+from triage.llm.gemini import Gemini, LLMError
+from triage.rules.confidence import compute_confidence
 from triage.tools.github import GitHubTools, ToolError
 from triage.tools.urls import InvalidTarget, parse_target
 
@@ -14,6 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("target", help="owner/repo, owner/repo#12, repo URL or issue URL")
     p.add_argument("--state", choices=["open", "closed", "all"], default="open")
     p.add_argument("--limit", type=int, default=10, help=f"max issues to fetch (1-{MAX_LIMIT})")
+    p.add_argument("--fetch-only", action="store_true", help="skip Gemini, just list issues")
     return p
 
 
@@ -42,13 +47,35 @@ def main(argv=None) -> int:
         return 1
 
     print(f"Fetched {len(issues)} issue(s) from {repo.full_name}\n")
+    llm = None if args.fetch_only else Gemini(config)
     for issue in issues:
         labels = ", ".join(issue.labels) or "none"
         preview = issue.body.replace("\n", " ")[:80] or "(empty body)"
         print(f"#{issue.number} [{issue.state}] {issue.title}")
         print(f"   author: {issue.author} | labels: {labels}")
-        print(f"   {preview}\n")
+        print(f"   {preview}")
+        if llm:
+            print_classification(issue, llm)
+        print()
     return 0
+
+
+def print_classification(issue, llm: Gemini) -> None:
+    try:
+        result = classify(issue, llm)
+    except LLMError as e:
+        print(f"   ! LLM error: {e}")
+        return
+    c = result.classification
+    if c is None:
+        print(f"   ! {result.error} ({result.model})")
+        return
+    retried = " after re-ask" if result.attempts > 1 else ""
+    conf = compute_confidence(issue, c)
+    print(f"   -> {c.category}, confidence {conf.score:.2f} via {result.model}{retried}")
+    print(f"   score: {conf.explain()}  (gemini said {c.model_confidence:.2f})")
+    print(f"   why: {c.reason}")
+    print("   reply: " + textwrap.fill(c.reply, width=96, subsequent_indent="          "))
 
 
 if __name__ == "__main__":

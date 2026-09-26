@@ -50,6 +50,64 @@ real APIs or the models. The three crash bugs from that review are already fixed
   (0 ok, 1 runtime error, 2 bad input).
   *Where:* `tests/`.
 
+## LLM classification
+
+Findings from the first live runs (2026-09-26). Chosen and already done: faster fallback (primary
+gets 1 try), no money/refund talk in replies, question replies only acknowledge.
+
+- [ ] **Soft promises get through.** Real replies said "We will look into this as soon as possible"
+  and "will look into providing more clarity". Ban these in the prompt with examples, and extend
+  the R5 phrase list ("will look into", "as soon as possible", "shortly", "ETA", "we'll").
+  *Where:* `triage/llm/prompts.py` and R5.
+
+- [x] **Confidence was inflated** (Gemini said 1.00 for everything). Now computed in code from
+  yes/no evidence + fixed text checks (`triage/rules/confidence.py`); Gemini's own number is kept
+  as `model_confidence` for logging only.
+- [x] **Issues passed R2 with no category evidence** (base + general answers = 0.75). Base is now
+  0.35, so base + general answers = 0.60; an issue needs at least one category-specific fact to pass.
+- [x] **Gemini said "yes" too easily** to the general questions. `clear_intent` became the stricter
+  `actionable`, and the prompt requires quotable words for every "yes". Now "yes" only for the
+  clearly actionable case in tests.
+- [ ] **`single_topic` is still "yes" almost always** (it was false only for the three-topics case).
+  Worth only +0.10, so low impact. Could tighten further or drop.
+- [ ] **Languages without spaces** (Chinese, Japanese, Thai) count as 1 word, so every such issue
+  gets short body + generic title (−0.30). No such users yet. Fix: count characters instead, or
+  skip the length rules for text without spaces. Also decide the reply language for non-English
+  issues (R4 may fail if the reply is English).
+- [ ] **Short but good titles are marked generic**: "Crash on startup", "Memory leak", "Add SVG
+  export" lose 0.10 for being under 4 words. Keep only the generic-phrase list, or apply the
+  length part only below 2 words.
+- [ ] **Prose counted as log output**: lines starting with lowercase "at ..." or "Error ..."
+  ("at the moment the app crashes") match the log pattern. Match real stack-trace shapes instead
+  (`at foo.bar(File.java:12)`, `File "x.py", line 3`).
+- [ ] **Empty issue templates fool the length rule**: headings + "_No response_" count as 21 words.
+  Strip markdown headings and "_No response_" before counting.
+- [ ] **Confidently the wrong category**: "Can it support dark mode?" comes back as question (0.85,
+  passes) although it's a feature request. The wrong category's facts are then used for scoring.
+  Low harm (replies only acknowledge), but nothing catches it.
+- [ ] **Run-to-run variation** (temperature 1.0): one yes/no flip moves the score 0.05–0.25, so
+  borderline issues can flip between pass and fail. Options: always escalate a grey zone (e.g.
+  0.65–0.75), or ask twice and keep the lower score.
+- [ ] **Verify "yes" answers with quotes**: have Gemini return the quoted words for each "yes"
+  and check they appear in the issue. Strongest guard against inflated answers; costs more tokens.
+- [ ] **Tune the confidence weights on real issues.** The weights and the 15-word / 4-word
+  thresholds are first guesses. After some runs, compare computed scores with what a human would
+  decide, and compare with `model_confidence` too.
+
+- [ ] **Replies @mention the author.** This pings them; GitHub already notifies the author of new
+  comments. Tell the prompt not to use @mentions (or strip them before posting).
+
+- [ ] **No repo knowledge.** Question replies can only acknowledge. Option later: fetch the README
+  via Composio and pass it as context, so replies can point to the right docs (more tokens, and a
+  new hallucination risk).
+
+- [ ] **Primary model is slow even when it answers.** gemini-3.5-flash took 14–39s per call while
+  "in high demand"; the faster fallback only helps when it returns 503. If it stays slow, lower
+  `TIMEOUT_MS` or make flash-lite the primary.
+
+- [ ] **Log detail for the retry path.** `classify` reports only the model that answered last. For
+  `log.jsonl`, also record whether the fallback was used and what error the primary gave.
+
 ## For the next modules
 
 ### LLM (classification and reply)
